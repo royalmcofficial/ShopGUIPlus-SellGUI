@@ -50,6 +50,18 @@ public final class DynaShopHandler {
                 return null;
             }
 
+            return getSellPricePerItem(player, shopItem, itemStack);
+        } catch (RuntimeException | LinkageError exception) {
+            return null;
+        }
+    }
+
+    public static Double getSellPricePerItem(Player player, ShopItem shopItem, ItemStack itemStack) {
+        if (shopItem == null || shopItem.getShop() == null || itemStack == null || !isPresent()) {
+            return null;
+        }
+
+        try {
             String shopId = shopItem.getShop().getId();
             String itemId = shopItem.getId();
 
@@ -78,13 +90,16 @@ public final class DynaShopHandler {
         }
     }
 
-    public static void notifySale(Player player, ItemStack itemStack, int amount, double totalPrice) {
+    public static void notifySale(Player player, ShopItem shopItem, ItemStack itemStack, int amount,
+            double totalPrice) {
         if (itemStack == null || amount <= 0 || !isPresent()) {
             return;
         }
 
         try {
-            ShopItem shopItem = ShopGuiPlusApi.getItemStackShopItem(player, itemStack);
+            if (shopItem == null || shopItem.getShop() == null) {
+                shopItem = ShopGuiPlusApi.getItemStackShopItem(player, itemStack);
+            }
             if (shopItem == null || shopItem.getShop() == null) {
                 return;
             }

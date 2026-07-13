@@ -26,6 +26,7 @@ import net.brcdev.shopgui.ShopGuiPlugin;
 import net.brcdev.shopgui.economy.EconomyType;
 import net.brcdev.shopgui.provider.economy.EconomyProvider;
 import net.mackenziemolloy.shopguiplus.sellgui.SellGUI;
+import net.mackenziemolloy.shopguiplus.sellgui.objects.SellOffer;
 import net.mackenziemolloy.shopguiplus.sellgui.objects.ShopItemPriceValue;
 import net.mackenziemolloy.shopguiplus.sellgui.utility.*;
 import net.mackenziemolloy.shopguiplus.sellgui.utility.sirblobman.HexColorUtility;
@@ -356,6 +357,7 @@ public final class CommandSellGUI implements TabExecutor {
 
         // ItemStack is a stack size of 0, Integer is Price
         Map<ItemStack, ShopItemPriceValue> itemStackSellPriceCache = new HashMap<>();
+        Map<ItemStack, SellOffer> bestOfferCache = new HashMap<>();
 
         Map<ItemStack, Map<Short, Integer>> soldMap2 = new HashMap<>();
         Map<EconomyType, Double> moneyMap = new EnumMap<>(EconomyType.class);
@@ -379,18 +381,25 @@ public final class CommandSellGUI implements TabExecutor {
             ItemStack singleItem = new ItemStack(i);
             singleItem.setAmount(1);
 
-            if (itemStackSellPriceCache.getOrDefault(singleItem, new ShopItemPriceValue(null, 0.0)).getSellPrice() > 0 || ShopHandler.getItemSellPrice(i, player) > 0) {
+            SellOffer bestOffer = bestOfferCache.computeIfAbsent(singleItem,
+                    key -> ShopHandler.findBestSellOffer(player, key));
+
+            if (bestOffer != null || ShopHandler.getItemSellPrice(i, player) > 0) {
                 itemAmount += i.getAmount();
 
                 @Deprecated
                 short materialDamage = i.getDurability();
                 int amount = i.getAmount();
 
-                double itemSellPrice = itemStackSellPriceCache.containsKey(singleItem) ? itemStackSellPriceCache.get(singleItem).getSellPrice() * amount : ShopHandler.getItemSellPrice(i, player);
+                double itemSellPrice = bestOffer != null
+                        ? bestOffer.getPricePerItem() * amount
+                        : ShopHandler.getItemSellPrice(i, player);
 
                 totalPrice += itemSellPrice;
 
-                EconomyType itemEconomyType = ShopHandler.getEconomyType(i);
+                EconomyType itemEconomyType = bestOffer != null
+                        ? bestOffer.getEconomyType()
+                        : ShopHandler.getEconomyType(i);
 
                 ItemStack SingleItemStack = new ItemStack(i);
                 SingleItemStack.setAmount(1);
@@ -458,9 +467,12 @@ public final class CommandSellGUI implements TabExecutor {
                     continue;
                 }
 
-                double pricePerItem = itemStackSellPriceCache
+                SellOffer soldOffer = bestOfferCache.get(soldItem);
+                double pricePerItem = soldOffer != null ? soldOffer.getPricePerItem() : itemStackSellPriceCache
                         .getOrDefault(soldItem, new ShopItemPriceValue(null, 0.0)).getSellPrice();
-                DynaShopHandler.notifySale(player, soldItem, soldAmount, pricePerItem * soldAmount);
+
+                DynaShopHandler.notifySale(player, soldOffer != null ? soldOffer.getShopItem() : null, soldItem,
+                        soldAmount, pricePerItem * soldAmount);
             }
         }
 
