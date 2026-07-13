@@ -379,14 +379,14 @@ public final class CommandSellGUI implements TabExecutor {
             ItemStack singleItem = new ItemStack(i);
             singleItem.setAmount(1);
 
-            if (itemStackSellPriceCache.getOrDefault(singleItem, new ShopItemPriceValue(null, 0.0)).getSellPrice() > 0 || ShopGuiPlusApi.getItemStackPriceSell(player, i) > 0) {
+            if (itemStackSellPriceCache.getOrDefault(singleItem, new ShopItemPriceValue(null, 0.0)).getSellPrice() > 0 || ShopHandler.getItemSellPrice(i, player) > 0) {
                 itemAmount += i.getAmount();
 
                 @Deprecated
                 short materialDamage = i.getDurability();
                 int amount = i.getAmount();
 
-                double itemSellPrice = itemStackSellPriceCache.containsKey(singleItem) ? itemStackSellPriceCache.get(singleItem).getSellPrice() * amount : ShopGuiPlusApi.getItemStackPriceSell(player, i);
+                double itemSellPrice = itemStackSellPriceCache.containsKey(singleItem) ? itemStackSellPriceCache.get(singleItem).getSellPrice() * amount : ShopHandler.getItemSellPrice(i, player);
 
                 totalPrice += itemSellPrice;
 
@@ -455,7 +455,7 @@ public final class CommandSellGUI implements TabExecutor {
                     @Deprecated
                     ItemStack materialItemStack = entry.getKey();
 
-                    double profits = ShopGuiPlusApi.getItemStackPriceSell(player, materialItemStack)
+                    double profits = ShopHandler.getItemSellPrice(materialItemStack, player)
                             * damageEntry.getValue();
                     String profitsFormatted = ShopGuiPlusApi.getPlugin().getEconomyManager()
                             .getEconomyProvider(ShopHandler.getEconomyType(materialItemStack))

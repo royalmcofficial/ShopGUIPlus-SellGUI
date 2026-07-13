@@ -15,6 +15,9 @@ authors:
 depend:
   - "ShopGUIPlus"
 
+softdepend:
+  - "ShopGUIPlus-DynaShop"
+
 commands:
   sellgui:
     description: "Sell Command"

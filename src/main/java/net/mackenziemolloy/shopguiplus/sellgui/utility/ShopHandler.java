@@ -38,6 +38,12 @@ public class ShopHandler {
     }
 
     public static Double getItemSellPrice(ItemStack material, Player player) {
+        Double dynaShopPricePerItem = DynaShopHandler.getSellPricePerItem(player, material);
+        if (dynaShopPricePerItem != null) {
+            int amount = Math.max(material.getAmount(), 1);
+            return dynaShopPricePerItem * amount;
+        }
+
         return ShopGuiPlusApi.getItemStackPriceSell(player, material);
     }
 
