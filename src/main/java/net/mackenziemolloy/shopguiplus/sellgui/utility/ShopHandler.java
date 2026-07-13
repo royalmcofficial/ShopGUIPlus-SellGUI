@@ -25,7 +25,8 @@ public class ShopHandler {
 
     @NotNull
     public static EconomyType getEconomyType(ItemStack material) {
-        EconomyType economyType = ShopGuiPlusApi.getItemStackShop(material).getEconomyType();
+        Shop shop = ShopGuiPlusApi.getItemStackShop(material);
+        EconomyType economyType = shop != null ? shop.getEconomyType() : null;
         if (economyType != null) {
             return economyType;
         }
@@ -143,7 +144,12 @@ public class ShopHandler {
                     }
 
                     if (bestOffer == null || pricePerItem > bestOffer.getPricePerItem()) {
-                        bestOffer = new SellOffer(shopItem, pricePerItem, shop.getEconomyType());
+                        EconomyType economyType = shop.getEconomyType();
+                        if (economyType == null) {
+                            economyType = getEconomyType(singleItem);
+                        }
+
+                        bestOffer = new SellOffer(shopItem, pricePerItem, economyType);
                     }
                 }
             }

@@ -397,7 +397,7 @@ public final class CommandSellGUI implements TabExecutor {
 
                 totalPrice += itemSellPrice;
 
-                EconomyType itemEconomyType = bestOffer != null
+                EconomyType itemEconomyType = bestOffer != null && bestOffer.getEconomyType() != null
                         ? bestOffer.getEconomyType()
                         : ShopHandler.getEconomyType(i);
 
