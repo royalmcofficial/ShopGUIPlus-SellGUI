@@ -36,6 +36,11 @@ repositories {
     }
 }
 
+configurations.all {
+    resolutionStrategy.cacheChangingModulesFor 0, 'seconds'
+    resolutionStrategy.cacheDynamicVersionsFor 0, 'seconds'
+}
+
 dependencies {
     compileOnly "org.spigotmc:spigot-api:1.21.8-R0.1-SNAPSHOT"
     compileOnly 'com.github.brcdev-minecraft:shopgui-api:3.0.0'
