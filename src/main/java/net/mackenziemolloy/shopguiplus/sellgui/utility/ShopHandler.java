@@ -1,5 +1,6 @@
 package net.mackenziemolloy.shopguiplus.sellgui.utility;
 
+import java.lang.reflect.Method;
 import java.text.DecimalFormat;
 import java.util.Locale;
 import java.util.Set;
@@ -54,6 +55,52 @@ public class ShopHandler {
     }
 
     /**
+     * Shop#hasAccess has changed shape between ShopGUI+ releases, and calling a signature the
+     * running server does not have throws NoSuchMethodError mid-sale. Resolve it once against
+     * whatever is actually installed; if no known signature exists, do not block the shop.
+     */
+    private static Method hasAccessMethod;
+    private static boolean hasAccessResolved;
+
+    private static synchronized boolean hasAccess(Shop shop, Player player, ShopItem shopItem) {
+        if (!hasAccessResolved) {
+            hasAccessResolved = true;
+            try {
+                hasAccessMethod = Shop.class.getMethod("hasAccess", Player.class, ShopItem.class, boolean.class);
+            } catch (NoSuchMethodException first) {
+                try {
+                    hasAccessMethod = Shop.class.getMethod("hasAccess", Player.class, ShopItem.class);
+                } catch (NoSuchMethodException second) {
+                    try {
+                        hasAccessMethod = Shop.class.getMethod("hasAccess", Player.class);
+                    } catch (NoSuchMethodException third) {
+                        hasAccessMethod = null;
+                    }
+                }
+            }
+        }
+
+        if (hasAccessMethod == null) {
+            return true;
+        }
+
+        try {
+            Object result;
+            int parameters = hasAccessMethod.getParameterCount();
+            if (parameters == 3) {
+                result = hasAccessMethod.invoke(shop, player, shopItem, false);
+            } else if (parameters == 2) {
+                result = hasAccessMethod.invoke(shop, player, shopItem);
+            } else {
+                result = hasAccessMethod.invoke(shop, player);
+            }
+            return !(result instanceof Boolean) || (Boolean) result;
+        } catch (ReflectiveOperationException | RuntimeException | LinkageError exception) {
+            return true;
+        }
+    }
+
+    /**
      * The shop that pays the most for this item, across every shop the player may sell in.
      * ShopGUI+ on its own stops at the first shop containing the item, so an item listed in several
      * shops (a black market next to a food shop, say) would never fetch its best price.
@@ -82,7 +129,7 @@ public class ShopHandler {
                     if (!shopItem.getItem().isSimilar(singleItem)) {
                         continue;
                     }
-                    if (!shop.hasAccess(player, shopItem, false)) {
+                    if (!hasAccess(shop, player, shopItem)) {
                         continue;
                     }
 
@@ -100,7 +147,7 @@ public class ShopHandler {
                     }
                 }
             }
-        } catch (ShopsNotLoadedException | RuntimeException exception) {
+        } catch (ShopsNotLoadedException | RuntimeException | LinkageError exception) {
             return null;
         }
 
