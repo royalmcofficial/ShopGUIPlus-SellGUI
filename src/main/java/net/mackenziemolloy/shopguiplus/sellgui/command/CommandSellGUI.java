@@ -445,6 +445,25 @@ public final class CommandSellGUI implements TabExecutor {
                     formattedPricing.length() - 2));
         }
 
+        if (DynaShopHandler.isPresent()) {
+            for (Entry<ItemStack, Map<Short, Integer>> soldEntry : soldMap2.entrySet()) {
+                ItemStack soldItem = soldEntry.getKey();
+
+                int soldAmount = 0;
+                for (Integer soldCount : soldEntry.getValue().values()) {
+                    soldAmount += soldCount;
+                }
+
+                if (soldAmount <= 0) {
+                    continue;
+                }
+
+                double pricePerItem = itemStackSellPriceCache
+                        .getOrDefault(soldItem, new ShopItemPriceValue(null, 0.0)).getSellPrice();
+                DynaShopHandler.notifySale(player, soldItem, soldAmount, pricePerItem * soldAmount);
+            }
+        }
+
         List<String> receiptList = new LinkedList<>();
         List<String> itemList = new LinkedList<>();
 

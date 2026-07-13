@@ -11,6 +11,7 @@ import fr.tylwen.satyria.dynashop.DynaShopPlugin;
 import fr.tylwen.satyria.dynashop.data.param.DynaShopType;
 import fr.tylwen.satyria.dynashop.price.DynamicPrice;
 import net.brcdev.shopgui.ShopGuiPlusApi;
+import net.brcdev.shopgui.shop.ShopManager.ShopAction;
 import net.brcdev.shopgui.shop.item.ShopItem;
 
 public final class DynaShopHandler {
@@ -74,6 +75,32 @@ public final class DynaShopHandler {
             return price.getSellPrice();
         } catch (RuntimeException | LinkageError exception) {
             return null;
+        }
+    }
+
+    public static void notifySale(Player player, ItemStack itemStack, int amount, double totalPrice) {
+        if (itemStack == null || amount <= 0 || !isPresent()) {
+            return;
+        }
+
+        try {
+            ShopItem shopItem = ShopGuiPlusApi.getItemStackShopItem(player, itemStack);
+            if (shopItem == null || shopItem.getShop() == null) {
+                return;
+            }
+
+            DynaShopPlugin dynaShop = DynaShopPlugin.getInstance();
+            if (dynaShop == null) {
+                return;
+            }
+
+            ItemStack singleItem = itemStack.clone();
+            singleItem.setAmount(1);
+
+            dynaShop.getDynaShopListener().handleExternalTransaction(player, shopItem.getShop().getId(),
+                    shopItem.getId(), singleItem, amount, ShopAction.SELL, totalPrice);
+        } catch (RuntimeException | LinkageError exception) {
+            return;
         }
     }
 }
