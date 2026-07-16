@@ -86,7 +86,12 @@ public final class CommandSellGUI implements TabExecutor {
     @Override
     public List<String> onTabComplete(@NotNull CommandSender sender, @NotNull Command command, @NotNull String label, String[] args) {
         if (args.length == 1) {
-            List<String> valueSet = Arrays.asList("rl", "reload", "debug", "dump");
+            List<String> valueSet = new ArrayList<>(Arrays.asList("rl", "reload", "debug", "dump"));
+            if (!(sender instanceof Player)) {
+                for (Player online : Bukkit.getOnlinePlayers()) {
+                    valueSet.add(online.getName());
+                }
+            }
             return StringUtil.copyPartialMatches(args[0], valueSet, new ArrayList<>());
         }
 
@@ -109,7 +114,7 @@ public final class CommandSellGUI implements TabExecutor {
         return switch (sub) {
             case "rl", "reload" -> commandReload(sender);
             case "debug", "dump" -> commandDebug(sender);
-            default -> false;
+            default -> commandOpenOther(sender, args[0]);
         };
     }
 
@@ -203,6 +208,28 @@ public final class CommandSellGUI implements TabExecutor {
             return true;
         }
 
+        openSellGuiFor(player);
+        return true;
+    }
+
+    private boolean commandOpenOther(CommandSender sender, String targetName) {
+        if (sender instanceof Player) {
+            sender.sendMessage(ChatColor.RED + "The Sell GUI can only be opened for another player from the console.");
+            return true;
+        }
+
+        Player target = Bukkit.getPlayerExact(targetName);
+        if (target == null) {
+            sender.sendMessage(ChatColor.RED + "Player '" + targetName + "' is not online.");
+            return true;
+        }
+
+        openSellGuiFor(target);
+        sender.sendMessage(ChatColor.GREEN + "Opened the Sell GUI for " + target.getName() + ".");
+        return true;
+    }
+
+    private void openSellGuiFor(Player player) {
         CommentedConfiguration configuration = this.plugin.getConfiguration();
         int guiSize = configuration.getInt("options.rows", 6);
         if (guiSize > 6 || guiSize < 1) {
@@ -219,7 +246,6 @@ public final class CommandSellGUI implements TabExecutor {
         gui.setCloseGuiAction(event -> scheduler.runAtEntity(player, task -> onGuiClose(player, event, ignoredSlotSet)));
 
         scheduler.runAtEntity(player, task -> gui.open(player));
-        return true;
     }
 
     private boolean checkGameMode(Player player) {

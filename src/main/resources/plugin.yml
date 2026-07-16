@@ -21,6 +21,23 @@ softdepend:
 commands:
   sellgui:
     description: "Sell Command"
+    permission: "sellgui.use"
+    permission-message: "§cYou do not have permission"
     aliases:
       - "sg"
       - "sellg"
+
+permissions:
+  sellgui.use:
+    description: "Access to /sellgui (opens the sell GUI)"
+    default: op
+  sellgui.reload:
+    description: "Access to /sellgui reload"
+    default: op
+    children:
+      sellgui.use: true
+  sellgui.dump:
+    description: "Access to /sellgui dump / debug"
+    default: op
+    children:
+      sellgui.use: true
