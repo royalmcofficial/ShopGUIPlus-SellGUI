@@ -1,0 +1,27 @@
+name: Validate pull request
+
+on:
+  pull_request:
+    branches: [master]
+
+permissions:
+  contents: read
+  packages: read
+
+jobs:
+  compile:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: JDK 25
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '25'
+      - name: Build without publishing
+        run: |
+          chmod +x ./gradlew
+          ./gradlew clean build --no-daemon
+        env:
+          GITHUB_ACTOR: ${{ github.actor }}
+          GITHUB_TOKEN: ${{ secrets.GPR_TOKEN }}
