@@ -62,6 +62,12 @@ public final class DynaShopHandler {
         }
 
         try {
+            // Defense in depth for direct callers bypassing the offer selector.
+            double configuredSellPrice = shopItem.getSellPriceForAmount(player, 1);
+            if (!Double.isFinite(configuredSellPrice) || configuredSellPrice <= 0) {
+                return -1.0;
+            }
+
             String shopId = shopItem.getShop().getId();
             String itemId = shopItem.getId();
 
@@ -80,8 +86,10 @@ public final class DynaShopHandler {
 
             DynamicPrice price = dynaShop.getDynaShopListener()
                     .getOrLoadPrice(player, shopId, itemId, singleItem, new HashSet<>(), new HashMap<>());
-            if (price == null || price.getSellPrice() <= 0) {
-                return null;
+            // A resolved DynaShop side with no valid sell price is blocked,
+            // not silently replaced with a positive ShopGUI+ base price.
+            if (price == null || !Double.isFinite(price.getSellPrice()) || price.getSellPrice() <= 0) {
+                return -1.0;
             }
 
             return price.getSellPrice();
