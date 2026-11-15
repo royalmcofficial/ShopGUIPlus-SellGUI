@@ -27,7 +27,6 @@ import net.brcdev.shopgui.economy.EconomyType;
 import net.brcdev.shopgui.provider.economy.EconomyProvider;
 import net.mackenziemolloy.shopguiplus.sellgui.SellGUI;
 import net.mackenziemolloy.shopguiplus.sellgui.objects.SellOffer;
-import net.mackenziemolloy.shopguiplus.sellgui.objects.ShopItemPriceValue;
 import net.mackenziemolloy.shopguiplus.sellgui.utility.*;
 import net.mackenziemolloy.shopguiplus.sellgui.utility.sirblobman.HexColorUtility;
 import net.mackenziemolloy.shopguiplus.sellgui.utility.sirblobman.MessageUtility;
@@ -381,8 +380,6 @@ public final class CommandSellGUI implements TabExecutor {
         int minorVersion = VersionUtility.getMinorVersion();
         CommentedConfiguration configuration = this.plugin.getConfiguration();
 
-        // ItemStack is a stack size of 0, Integer is Price
-        Map<ItemStack, ShopItemPriceValue> itemStackSellPriceCache = new HashMap<>();
         Map<ItemStack, SellOffer> bestOfferCache = new HashMap<>();
 
         Map<ItemStack, Map<Short, Integer>> soldMap2 = new HashMap<>();
@@ -410,27 +407,22 @@ public final class CommandSellGUI implements TabExecutor {
             SellOffer bestOffer = bestOfferCache.computeIfAbsent(singleItem,
                     key -> ShopHandler.findBestSellOffer(player, key));
 
-            if (bestOffer != null || ShopHandler.getItemSellPrice(i, player) > 0) {
+            // Only a checked, accessible, sell-enabled shop offer can pay out.
+            if (bestOffer != null) {
                 itemAmount += i.getAmount();
 
                 @Deprecated
                 short materialDamage = i.getDurability();
                 int amount = i.getAmount();
 
-                double itemSellPrice = bestOffer != null
-                        ? bestOffer.getPricePerItem() * amount
-                        : ShopHandler.getItemSellPrice(i, player);
+                double itemSellPrice = bestOffer.getPricePerItem() * amount;
 
                 totalPrice += itemSellPrice;
 
-                EconomyType itemEconomyType = bestOffer != null && bestOffer.getEconomyType() != null
-                        ? bestOffer.getEconomyType()
-                        : ShopHandler.getEconomyType(i);
+                EconomyType itemEconomyType = bestOffer.getEconomyType();
 
                 ItemStack SingleItemStack = new ItemStack(i);
                 SingleItemStack.setAmount(1);
-
-                itemStackSellPriceCache.putIfAbsent(SingleItemStack, new ShopItemPriceValue(itemEconomyType, itemSellPrice/amount));
 
                 Map<Short, Integer> totalSold = soldMap2.getOrDefault(SingleItemStack, new HashMap<>());
                 int totalSoldCount = totalSold.getOrDefault(materialDamage, 0);
@@ -443,10 +435,10 @@ public final class CommandSellGUI implements TabExecutor {
                 double amountSold2 = (totalSold2 + itemSellPrice);
                 moneyMap.put(itemEconomyType, amountSold2);
             } else {
-                excessItems = true;
-
                 Location location = player.getLocation().add(0.0D, 0.5D, 0.0D);
                 Map<Integer, ItemStack> fallenItems = event.getPlayer().getInventory().addItem(i);
+                // Only warn when the returned unsold item actually overflows inventory.
+                excessItems |= !fallenItems.isEmpty();
                 scheduler.runAtLocation(location, task -> {
                     World world = player.getWorld();
                     fallenItems.values().forEach(item -> world.dropItemNaturally(location, item));
@@ -494,10 +486,12 @@ public final class CommandSellGUI implements TabExecutor {
                 }
 
                 SellOffer soldOffer = bestOfferCache.get(soldItem);
-                double pricePerItem = soldOffer != null ? soldOffer.getPricePerItem() : itemStackSellPriceCache
-                        .getOrDefault(soldItem, new ShopItemPriceValue(null, 0.0)).getSellPrice();
+                if (soldOffer == null) {
+                    continue;
+                }
 
-                DynaShopHandler.notifySale(player, soldOffer != null ? soldOffer.getShopItem() : null, soldItem,
+                double pricePerItem = soldOffer.getPricePerItem();
+                DynaShopHandler.notifySale(player, soldOffer.getShopItem(), soldItem,
                         soldAmount, pricePerItem * soldAmount);
             }
         }

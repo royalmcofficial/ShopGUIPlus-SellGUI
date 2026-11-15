@@ -1,0 +1,48 @@
+name: Validate pull request
+
+on:
+  pull_request:
+    branches: [master]
+
+permissions:
+  contents: read
+
+jobs:
+  compile:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout SellGUI
+        uses: actions/checkout@v4
+      - name: Checkout pinned RoyalMC DynaShop API source
+        uses: actions/checkout@v4
+        with:
+          repository: royalmcofficial/ShopGUIPlus-DynaShop
+          ref: 0845099abbccbdd0a0572de254c7c37dcef15533
+          path: _deps/dynashop
+      - name: JDK 25
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '25'
+      - name: Install pinned DynaShop API into local Maven repository
+        run: mvn -B --no-transfer-progress -f _deps/dynashop/pom.xml -DskipTests install
+      - name: Build SellGUI without publishing
+        run: |
+          chmod +x ./gradlew
+          ./gradlew clean build --no-daemon
+        env:
+          GITHUB_ACTOR: ${{ github.actor }}
+          GITHUB_TOKEN: ${{ github.token }}
+      - name: Verify and checksum staging JAR
+        run: |
+          test -s build/libs/ShopGUIPlus-SellGUI-1.1.8-SNAPSHOT-all.jar
+          sha256sum build/libs/ShopGUIPlus-SellGUI-1.1.8-SNAPSHOT-all.jar | tee build/libs/staging-sha256.txt
+      - name: Upload SellGUI PR staging build
+        uses: actions/upload-artifact@v4
+        with:
+          name: RoyalMC-SellGUI-disabled-sell-pr1-staging
+          path: |
+            build/libs/ShopGUIPlus-SellGUI-1.1.8-SNAPSHOT-all.jar
+            build/libs/staging-sha256.txt
+          if-no-files-found: error
+          retention-days: 90

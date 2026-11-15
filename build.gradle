@@ -21,7 +21,8 @@ repositories {
     mavenCentral()
 
     maven { url = 'https://repo.papermc.io/repository/maven-public/' }
-    maven { url = "https://repo.mattstudios.me/artifactory/public/" }
+    // Triumph GUI 3.1.13 is on Maven Central; the old MattStudios
+    // Artifactory host redirects to an unreachable parked domain.
     maven { url = 'https://oss.sonatype.org/content/repositories/snapshots/' }
     maven { url = 'https://repo.codemc.org/repository/maven-public/' }
     maven { url = 'https://jitpack.io/' }
