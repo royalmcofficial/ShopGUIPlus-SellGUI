@@ -62,9 +62,15 @@ public final class DynaShopHandler {
         }
 
         try {
-            // Defense in depth for direct callers bypassing the offer selector.
-            double configuredSellPrice = shopItem.getSellPriceForAmount(player, 1);
-            if (!Double.isFinite(configuredSellPrice) || configuredSellPrice <= 0) {
+            // Defense in depth: require a player-independent base price before
+            // player-specific or dynamic prices can authorize this listing.
+            double baseSellPrice = shopItem.getSellPrice();
+            if (!Double.isFinite(baseSellPrice) || baseSellPrice <= 0) {
+                return -1.0;
+            }
+
+            double effectiveSellPrice = shopItem.getSellPriceForAmount(player, 1);
+            if (!Double.isFinite(effectiveSellPrice) || effectiveSellPrice <= 0) {
                 return -1.0;
             }
 

@@ -136,16 +136,21 @@ public class ShopHandler {
                         continue;
                     }
 
-                    // ShopGUI+ authorizes selling; a stale DynaShop price must
-                    // never override an explicitly disabled sell side (-1).
-                    double configuredSellPrice = shopItem.getSellPriceForAmount(player, 1);
-                    if (!Double.isFinite(configuredSellPrice) || configuredSellPrice <= 0) {
+                    // Require a player-independent base price before a player-specific
+                    // quote or dynamic price can authorize this listing.
+                    double baseSellPrice = shopItem.getSellPrice();
+                    if (!Double.isFinite(baseSellPrice) || baseSellPrice <= 0) {
+                        continue;
+                    }
+
+                    double effectiveSellPrice = shopItem.getSellPriceForAmount(player, 1);
+                    if (!Double.isFinite(effectiveSellPrice) || effectiveSellPrice <= 0) {
                         continue;
                     }
 
                     Double pricePerItem = DynaShopHandler.getSellPricePerItem(player, shopItem, singleItem);
                     if (pricePerItem == null) {
-                        pricePerItem = configuredSellPrice;
+                        pricePerItem = effectiveSellPrice;
                     }
 
                     if (!Double.isFinite(pricePerItem) || pricePerItem <= 0) {
