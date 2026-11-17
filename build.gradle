@@ -48,6 +48,8 @@ dependencies {
     compileOnly 'fr.tylwen.satyria.dynashop:shopguiplus-dynashop:1.8.0-SNAPSHOT'
     implementation "dev.triumphteam:triumph-gui:3.1.13"
     implementation 'org.bstats:bstats-bukkit:3.1.0'
+    testImplementation "org.spigotmc:spigot-api:1.21.8-R0.1-SNAPSHOT"
+    testImplementation 'com.github.brcdev-minecraft:shopgui-api:3.2.0'
     testImplementation 'org.junit.jupiter:junit-jupiter:5.13.4'
     testImplementation 'org.mockito:mockito-core:5.20.0'
     implementation "com.tcoded:FoliaLib:0.5.1"
@@ -90,3 +92,4 @@ publishing {
         }
     }
 }
+

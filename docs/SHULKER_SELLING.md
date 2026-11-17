@@ -27,3 +27,7 @@ The upstream commits were not blindly merged:
 - `e29b32aa47b233f506d987565b2b4f2be9956088` adds receipt line separators.
 
 These presentation changes are independent of shulker sales; existing configuration defaults remain as in the RoyalMC fork.
+
+## Failed return recovery
+
+An operator can inspect pending return references through `SellGUI.getInstance().getCommand("sellgui").getExecutor()`, cast the executor to `CommandSellGUI`, and call `getFailedReturnRecoverySnapshot()`. The snapshot is in memory only and is lost when the command executor or plugin unloads. A failed inventory insert or overflow drop may have partially succeeded, so SellGUI does not retry automatically; use the warning's player name and UUID to reconcile the item with the player before recovery.

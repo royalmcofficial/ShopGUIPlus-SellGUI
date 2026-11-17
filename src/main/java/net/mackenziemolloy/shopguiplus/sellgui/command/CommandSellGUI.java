@@ -31,6 +31,7 @@ import net.mackenziemolloy.shopguiplus.sellgui.SellGUI;
 import net.mackenziemolloy.shopguiplus.sellgui.objects.SellOffer;
 import net.mackenziemolloy.shopguiplus.sellgui.objects.SaleLine;
 import net.mackenziemolloy.shopguiplus.sellgui.objects.SaleResult;
+import net.mackenziemolloy.shopguiplus.sellgui.objects.SaleBatch;
 import net.mackenziemolloy.shopguiplus.sellgui.utility.SaleProcessor;
 import net.mackenziemolloy.shopguiplus.sellgui.utility.*;
 import net.mackenziemolloy.shopguiplus.sellgui.utility.sirblobman.HexColorUtility;
@@ -73,6 +74,8 @@ public final class CommandSellGUI implements TabExecutor {
 
     private final SellGUI plugin;
     private final PlatformScheduler scheduler;
+    private final List<ItemStack> failedReturnRecovery = new java.util.concurrent.CopyOnWriteArrayList<>();
+    public List<ItemStack> getFailedReturnRecoverySnapshot() { return List.copyOf(failedReturnRecovery); }
 
     public CommandSellGUI(SellGUI plugin) {
         this.plugin = Objects.requireNonNull(plugin, "The plugin must not be null!");
@@ -389,6 +392,7 @@ public final class CommandSellGUI implements TabExecutor {
         CommentedConfiguration configuration = this.plugin.getConfiguration();
         Map<ItemStack, SellOffer> bestOfferCache = new HashMap<>();
         List<SaleLine> paidLines = new ArrayList<>();
+        SaleBatch batch = new SaleBatch();
         Map<EconomyType, Double> moneyMap = new EnumMap<>(EconomyType.class);
         double totalPrice = 0;
         int itemAmount = 0;
@@ -402,8 +406,8 @@ public final class CommandSellGUI implements TabExecutor {
             ItemStack item = inventory.getItem(slot);
             if (item == null || ignoredSlotSet.contains(slot)) continue;
             itemsPlacedInGui = true;
-            inputs.add(item.clone());
             inventory.setItem(slot, null);
+            batch.addInput(item);
         }
 
         SaleProcessor processor = new SaleProcessor(item -> {
@@ -421,23 +425,29 @@ public final class CommandSellGUI implements TabExecutor {
                 plugin.getLogger().warning("SellGUI payment failed; contents are preserved without retry: " + ex.getMessage());
                 return false;
             }
-        }, paidLines::add);
+        }, line -> { });
 
-        List<ItemStack> returned = new ArrayList<>();
-        for (ItemStack input : inputs) {
-            SaleResult result = processor.process(input);
-
-            ItemStack returnedItem = result.getReturnedItem();
-            if (returnedItem != null) returned.add(returnedItem);
-        }
-
-        for (ItemStack item : returned) {
-            Location location = player.getLocation().add(0.0D, 0.5D, 0.0D);
-            World world = location.getWorld();
-            Map<Integer, ItemStack> overflow = player.getInventory().addItem(item);
-            excessItems |= !overflow.isEmpty();
-            if (!overflow.isEmpty() && world != null) {
-                scheduler.runAtLocation(location, task -> overflow.values().forEach(stack -> world.dropItemNaturally(location, stack)));
+        Location returnLocation = player.getLocation().add(0.0D, 0.5D, 0.0D);
+        World returnWorld = returnLocation.getWorld();
+        try {
+            processor.processAll(batch);
+        } finally {
+            for (int index = 0; index < batch.size(); index++) {
+                SaleResult result = batch.getResult(index);
+                paidLines.addAll(result.getLines());
+                ItemStack ownedReturn = result.getReturnedItem();
+                if (ownedReturn == null) continue;
+                try {
+                    Map<Integer, ItemStack> overflow = player.getInventory().addItem(ownedReturn);
+                    if (!overflow.isEmpty()) {
+                        excessItems = true;
+                        List<ItemStack> overflowItems = new ArrayList<>(overflow.values());
+                        try {
+                            if (returnWorld != null) scheduler.runAtLocation(returnLocation, task -> overflowItems.forEach(stack -> returnWorld.dropItemNaturally(returnLocation, stack)));
+                            else failedReturnRecovery.addAll(overflowItems);
+                        } catch (RuntimeException | LinkageError dropFailure) { failedReturnRecovery.addAll(overflowItems); safeWarn("Could not schedule overflow drop", dropFailure); }
+                    }
+                } catch (RuntimeException | LinkageError returnFailure) { failedReturnRecovery.add(ownedReturn); safeWarn("Could not return GUI item for " + player.getName() + " (" + player.getUniqueId() + "); inspect recovery snapshot", returnFailure); }
             }
         }
         if (excessItems) sendMessage(player, "inventory_full");
@@ -531,6 +541,7 @@ public final class CommandSellGUI implements TabExecutor {
         if (configuration.getBoolean("options.action_bar_msgs", false) && minorVersion >= 9)
             sendActionBar(player, formattedPricing, itemAmountFormatted);
     }
+    private void safeWarn(String message, Throwable error) { try { plugin.getLogger().warning("SellGUI " + message + ": " + error.getMessage()); } catch (RuntimeException ignored) { } }
     private String getMessage(String path, @Nullable Function<String, String> replacer) {
         CommentedConfiguration configuration = this.plugin.getConfiguration();
         String message = configuration.getString("messages." + path, "");
@@ -607,3 +618,6 @@ public final class CommandSellGUI implements TabExecutor {
         player.spigot().sendMessage(ChatMessageType.ACTION_BAR, message);
     }
 }
+
+
+
