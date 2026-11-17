@@ -13,8 +13,10 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Map.Entry;
 import java.util.Objects;
+import java.util.LinkedHashMap;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Function;
 import java.util.logging.Logger;
 
@@ -27,7 +29,10 @@ import net.brcdev.shopgui.economy.EconomyType;
 import net.brcdev.shopgui.provider.economy.EconomyProvider;
 import net.mackenziemolloy.shopguiplus.sellgui.SellGUI;
 import net.mackenziemolloy.shopguiplus.sellgui.objects.SellOffer;
-import net.mackenziemolloy.shopguiplus.sellgui.objects.ShopItemPriceValue;
+import net.mackenziemolloy.shopguiplus.sellgui.objects.SaleLine;
+import net.mackenziemolloy.shopguiplus.sellgui.objects.SaleResult;
+import net.mackenziemolloy.shopguiplus.sellgui.objects.SaleBatch;
+import net.mackenziemolloy.shopguiplus.sellgui.utility.SaleProcessor;
 import net.mackenziemolloy.shopguiplus.sellgui.utility.*;
 import net.mackenziemolloy.shopguiplus.sellgui.utility.sirblobman.HexColorUtility;
 import net.mackenziemolloy.shopguiplus.sellgui.utility.sirblobman.MessageUtility;
@@ -69,6 +74,8 @@ public final class CommandSellGUI implements TabExecutor {
 
     private final SellGUI plugin;
     private final PlatformScheduler scheduler;
+    private final List<ItemStack> failedReturnRecovery = new java.util.concurrent.CopyOnWriteArrayList<>();
+    public List<ItemStack> getFailedReturnRecoverySnapshot() { return List.copyOf(failedReturnRecovery); }
 
     public CommandSellGUI(SellGUI plugin) {
         this.plugin = Objects.requireNonNull(plugin, "The plugin must not be null!");
@@ -243,7 +250,10 @@ public final class CommandSellGUI implements TabExecutor {
 
         Set<Integer> ignoredSlotSet = new HashSet<>();
         setDecorationItems(configuration, gui, ignoredSlotSet);
-        gui.setCloseGuiAction(event -> scheduler.runAtEntity(player, task -> onGuiClose(player, event, ignoredSlotSet)));
+        AtomicBoolean closeHandled = new AtomicBoolean();
+        gui.setCloseGuiAction(event -> {
+            if (closeHandled.compareAndSet(false, true)) onGuiClose(player, event, ignoredSlotSet);
+        });
 
         scheduler.runAtEntity(player, task -> gui.open(player));
     }
@@ -380,85 +390,77 @@ public final class CommandSellGUI implements TabExecutor {
     private void onGuiClose(Player player, InventoryCloseEvent event, Set<Integer> ignoredSlotSet) {
         int minorVersion = VersionUtility.getMinorVersion();
         CommentedConfiguration configuration = this.plugin.getConfiguration();
-
-        // ItemStack is a stack size of 0, Integer is Price
-        Map<ItemStack, ShopItemPriceValue> itemStackSellPriceCache = new HashMap<>();
         Map<ItemStack, SellOffer> bestOfferCache = new HashMap<>();
-
-        Map<ItemStack, Map<Short, Integer>> soldMap2 = new HashMap<>();
+        List<SaleLine> paidLines = new ArrayList<>();
+        SaleBatch batch = new SaleBatch();
         Map<EconomyType, Double> moneyMap = new EnumMap<>(EconomyType.class);
-
         double totalPrice = 0;
         int itemAmount = 0;
         boolean excessItems = false;
         boolean itemsPlacedInGui = false;
-
         Inventory inventory = event.getInventory();
-        for (int a = 0; a < inventory.getSize(); a++) {
-            ItemStack i = inventory.getItem(a);
-
-            // Quick check for invalid items: null or ignored item
-            if (i == null || ignoredSlotSet.contains(a)) {
-                continue;
-            }
-
-            itemsPlacedInGui = true;
-
-            ItemStack singleItem = new ItemStack(i);
-            singleItem.setAmount(1);
-
-            SellOffer bestOffer = bestOfferCache.computeIfAbsent(singleItem,
-                    key -> ShopHandler.findBestSellOffer(player, key));
-
-            if (bestOffer != null || ShopHandler.getItemSellPrice(i, player) > 0) {
-                itemAmount += i.getAmount();
-
-                @Deprecated
-                short materialDamage = i.getDurability();
-                int amount = i.getAmount();
-
-                double itemSellPrice = bestOffer != null
-                        ? bestOffer.getPricePerItem() * amount
-                        : ShopHandler.getItemSellPrice(i, player);
-
-                totalPrice += itemSellPrice;
-
-                EconomyType itemEconomyType = bestOffer != null && bestOffer.getEconomyType() != null
-                        ? bestOffer.getEconomyType()
-                        : ShopHandler.getEconomyType(i);
-
-                ItemStack SingleItemStack = new ItemStack(i);
-                SingleItemStack.setAmount(1);
-
-                itemStackSellPriceCache.putIfAbsent(SingleItemStack, new ShopItemPriceValue(itemEconomyType, itemSellPrice/amount));
-
-                Map<Short, Integer> totalSold = soldMap2.getOrDefault(SingleItemStack, new HashMap<>());
-                int totalSoldCount = totalSold.getOrDefault(materialDamage, 0);
-                int amountSold = (totalSoldCount + amount);
-
-                totalSold.put(materialDamage, amountSold);
-                soldMap2.put(SingleItemStack, totalSold);
-
-                double totalSold2 = moneyMap.getOrDefault(itemEconomyType, 0.0);
-                double amountSold2 = (totalSold2 + itemSellPrice);
-                moneyMap.put(itemEconomyType, amountSold2);
-            } else {
-                excessItems = true;
-
-                Location location = player.getLocation().add(0.0D, 0.5D, 0.0D);
-                Map<Integer, ItemStack> fallenItems = event.getPlayer().getInventory().addItem(i);
-                scheduler.runAtLocation(location, task -> {
-                    World world = player.getWorld();
-                    fallenItems.values().forEach(item -> world.dropItemNaturally(location, item));
-                });
-            }
+        Location returnLocation = player.getLocation().add(0.0D, 0.5D, 0.0D);
+        World returnWorld = returnLocation.getWorld();
+        try {
+        // Drain every input slot before any payment, preventing re-close from processing it twice.
+        List<ItemStack> inputs = new ArrayList<>();
+        for (int slot = 0; slot < inventory.getSize(); slot++) {
+            ItemStack drainingItem = null;
+            try {
+                ItemStack item = inventory.getItem(slot);
+                drainingItem = item;
+                if (item == null || ignoredSlotSet.contains(slot)) continue;
+                itemsPlacedInGui = true;
+                inventory.setItem(slot, null);
+                batch.addInput(item);
+            } catch (RuntimeException | LinkageError drainFailure) { if (drainingItem != null) failedReturnRecovery.add(drainingItem); safeWarn("Could not drain GUI slot " + slot + " for " + player.getName() + " (" + player.getUniqueId() + ")", drainFailure); }
         }
 
-        if (excessItems) {
-            sendMessage(player, "inventory_full");
-        }
+        SaleProcessor processor = new SaleProcessor(item -> {
+            ItemStack key = item.clone();
+            key.setAmount(1);
+            if (bestOfferCache.containsKey(key)) return bestOfferCache.get(key);
+            SellOffer offer = ShopHandler.findBestSellOffer(player, key);
+            bestOfferCache.put(key, offer);
+            return offer;
+        }, (economy, amount) -> {
+            EconomyProvider provider = ShopGuiPlusApi.getPlugin().getEconomyManager().getEconomyProvider(economy);
+            if (provider == null || !Double.isFinite(amount) || amount <= 0) return false;
+            try { provider.deposit(player, amount); return true; }
+            catch (RuntimeException | LinkageError ex) {
+                safeWarn("Payment outcome uncertain for " + player.getName() + " (" + player.getUniqueId() + "); no retry", ex);
+                return false;
+            }
+        }, line -> { });
 
-        if (totalPrice == 0) {
+            processor.processAll(batch);
+        } finally {
+            for (int index = 0; index < batch.size(); index++) {
+                SaleResult result = batch.getResult(index);
+                paidLines.addAll(result.getLines());
+                ItemStack ownedReturn = result.getReturnedItem();
+                if (ownedReturn == null) continue;
+                try {
+                    Map<Integer, ItemStack> overflow = player.getInventory().addItem(ownedReturn);
+                    if (!overflow.isEmpty()) {
+                        excessItems = true;
+                        List<ItemStack> overflowItems = new ArrayList<>(overflow.values());
+                        try {
+                            if (returnWorld != null) scheduler.runAtLocation(returnLocation, task -> { for (ItemStack stack : overflowItems) { try { returnWorld.dropItemNaturally(returnLocation, stack); } catch (RuntimeException | LinkageError dropFailure) { failedReturnRecovery.add(stack); safeWarn("Could not drop overflow for " + player.getName() + " (" + player.getUniqueId() + "); inspect recovery snapshot", dropFailure); } } });
+                            else failedReturnRecovery.addAll(overflowItems);
+                        } catch (RuntimeException | LinkageError dropFailure) { failedReturnRecovery.addAll(overflowItems); safeWarn("Could not schedule overflow drop", dropFailure); }
+                    }
+                } catch (RuntimeException | LinkageError returnFailure) { failedReturnRecovery.add(ownedReturn); safeWarn("Could not return GUI item for " + player.getName() + " (" + player.getUniqueId() + "); inspect recovery snapshot", returnFailure); }
+            }
+        }
+        if (excessItems) sendMessage(player, "inventory_full");
+
+        for (SaleLine line : paidLines) {
+            totalPrice += line.getTotalPrice();
+            itemAmount += line.getAmount();
+            moneyMap.merge(line.getEconomyType(), line.getTotalPrice(), Double::sum);
+        }
+        if (totalPrice <= 0) {
             PlayerHandler.playSound(player, "failed");
             sendMessage(player, itemsPlacedInGui ? "no_items_sold" : "no_items_in_gui");
             return;
@@ -467,133 +469,82 @@ public final class CommandSellGUI implements TabExecutor {
         PlayerHandler.playSound(player, "success");
         StringBuilder formattedPricing = new StringBuilder();
         for (Entry<EconomyType, Double> entry : moneyMap.entrySet()) {
-            EconomyProvider economyProvider = ShopGuiPlusApi.getPlugin().getEconomyManager()
-                    .getEconomyProvider(entry.getKey());
-            economyProvider.deposit(player, entry.getValue());
-            formattedPricing.append(economyProvider.getCurrencyPrefix()).append(StringFormatter
-                            .getFormattedNumber(entry.getValue())).append(economyProvider.getCurrencySuffix())
-                    .append(", ");
+            EconomyProvider provider = ShopGuiPlusApi.getPlugin().getEconomyManager().getEconomyProvider(entry.getKey());
+            if (provider == null) continue;
+            formattedPricing.append(provider.getCurrencyPrefix()).append(StringFormatter.getFormattedNumber(entry.getValue()))
+                    .append(provider.getCurrencySuffix()).append(", ");
         }
+        if (formattedPricing.toString().endsWith(", "))
+            formattedPricing = new StringBuilder(formattedPricing.substring(0, formattedPricing.length() - 2));
+        String formattedPricingValue = formattedPricing.toString();
+        int soldItemAmount = itemAmount;
 
-        if (formattedPricing.toString().endsWith(", ")) {
-            formattedPricing = new StringBuilder(formattedPricing.substring(0,
-                    formattedPricing.length() - 2));
+        // Notify once per item/offer after all quotes from this close have been captured.
+        Map<ItemStack, List<SaleLine>> notificationGroups = new LinkedHashMap<>();
+        for (SaleLine line : paidLines) {
+            ItemStack key = line.getItem();
+            key.setAmount(1);
+            notificationGroups.computeIfAbsent(key, ignored -> new ArrayList<>()).add(line);
         }
-
-        if (DynaShopHandler.isPresent()) {
-            for (Entry<ItemStack, Map<Short, Integer>> soldEntry : soldMap2.entrySet()) {
-                ItemStack soldItem = soldEntry.getKey();
-
-                int soldAmount = 0;
-                for (Integer soldCount : soldEntry.getValue().values()) {
-                    soldAmount += soldCount;
-                }
-
-                if (soldAmount <= 0) {
-                    continue;
-                }
-
-                SellOffer soldOffer = bestOfferCache.get(soldItem);
-                double pricePerItem = soldOffer != null ? soldOffer.getPricePerItem() : itemStackSellPriceCache
-                        .getOrDefault(soldItem, new ShopItemPriceValue(null, 0.0)).getSellPrice();
-
-                DynaShopHandler.notifySale(player, soldOffer != null ? soldOffer.getShopItem() : null, soldItem,
-                        soldAmount, pricePerItem * soldAmount);
-            }
+        for (List<SaleLine> group : notificationGroups.values()) {
+            SaleLine first = group.get(0);
+            int amount = group.stream().mapToInt(SaleLine::getAmount).sum();
+            double paid = group.stream().mapToDouble(SaleLine::getTotalPrice).sum();
+            DynaShopHandler.notifySale(player, first.getShopItem(), first.getItem(), amount, paid);
         }
 
         List<String> receiptList = new LinkedList<>();
         List<String> itemList = new LinkedList<>();
-
         if (configuration.getInt("options.receipt_type", 0) == 1
                 || configuration.getString("messages.items_sold", "").contains("{list}")) {
-            for (Entry<ItemStack, Map<Short, Integer>> entry : soldMap2.entrySet()) {
-                for (Entry<Short, Integer> damageEntry : entry.getValue().entrySet()) {
-                    @Deprecated
-                    ItemStack materialItemStack = entry.getKey();
-
-                    double profits = ShopHandler.getItemSellPrice(materialItemStack, player)
-                            * damageEntry.getValue();
-                    String profitsFormatted = ShopGuiPlusApi.getPlugin().getEconomyManager()
-                            .getEconomyProvider(ShopHandler.getEconomyType(materialItemStack))
-                            .getCurrencyPrefix() + StringFormatter.getFormattedNumber(profits)
-                            + ShopGuiPlusApi.getPlugin().getEconomyManager().getEconomyProvider(
-                                    ShopHandler.getEconomyType(materialItemStack))
-                            .getCurrencySuffix();
-
-                    String itemNameFormatted = StringFormatter.capitalize(materialItemStack.getType()
-                            .name().replace("AETHER_LEGACY_", "")
-                            .replace("LOST_AETHER_", "")
-                            .replace("_", " ").toLowerCase());
-
-                    ItemMeta itemMeta = materialItemStack.getItemMeta();
-                    if (itemMeta != null && itemMeta.hasDisplayName()) {
-                        String displayName = itemMeta.getDisplayName();
-                        if (!displayName.isEmpty()) {
-                            itemNameFormatted = materialItemStack.getItemMeta().getDisplayName();
-                        }
-                    }
-
-                    if (minorVersion <= 12 && !configuration.getBoolean("options.show_item_damage", false)) {
-                        itemNameFormatted += (":" + damageEntry.getKey());
-                    }
-
-                    String finalItemNameFormatted = itemNameFormatted;
-                    String itemLine = getMessage("receipt_item_layout", message -> message
-                            .replace("{amount}", String.valueOf(damageEntry.getValue()))
-                            .replace("{item}", finalItemNameFormatted)
-                            .replace("{price}", profitsFormatted));
-
-                    receiptList.add(itemLine);
-                    itemList.add(itemNameFormatted);
-                }
+            Map<ItemStack, List<SaleLine>> receiptGroups = new LinkedHashMap<>();
+            for (SaleLine line : paidLines) {
+                ItemStack key = line.getItem(); key.setAmount(1);
+                receiptGroups.computeIfAbsent(key, ignored -> new ArrayList<>()).add(line);
+            }
+            for (Entry<ItemStack, List<SaleLine>> entry : receiptGroups.entrySet()) {
+                ItemStack soldItem = entry.getKey();
+                int amount = entry.getValue().stream().mapToInt(SaleLine::getAmount).sum();
+                double profits = entry.getValue().stream().mapToDouble(SaleLine::getTotalPrice).sum();
+                EconomyProvider provider = ShopGuiPlusApi.getPlugin().getEconomyManager()
+                        .getEconomyProvider(entry.getValue().get(0).getEconomyType());
+                String price = (provider == null ? "" : provider.getCurrencyPrefix()) + StringFormatter.getFormattedNumber(profits)
+                        + (provider == null ? "" : provider.getCurrencySuffix());
+                String name = StringFormatter.capitalize(soldItem.getType().name().replace("AETHER_LEGACY_", "")
+                        .replace("LOST_AETHER_", "").replace("_", " ").toLowerCase());
+                ItemMeta meta = soldItem.getItemMeta();
+                if (meta != null && meta.hasDisplayName() && !meta.getDisplayName().isEmpty()) name = meta.getDisplayName();
+                if (minorVersion <= 12 && !configuration.getBoolean("options.show_item_damage", false))
+                    name += ":" + soldItem.getDurability();
+                String finalName = name;
+                receiptList.add(getMessage("receipt_item_layout", message -> message.replace("{amount}", String.valueOf(amount))
+                        .replace("{item}", finalName).replace("{price}", price)));
+                itemList.add(name);
             }
         }
 
         String itemAmountFormatted = StringFormatter.getFormattedNumber((double) itemAmount);
         if (configuration.getInt("options.receipt_type", 0) == 1) {
-            int finalItemAmount = itemAmount;
-            StringBuilder finalFormattedPricing1 = formattedPricing;
-
             TextComponent itemsSoldComponent = getTextComponentMessage("items_sold", message -> message
-                    .replace("{earning}", finalFormattedPricing1)
-                    .replace("{receipt}", "")
-                    .replace("{list}", String.join(", ", itemList))
-                    .replace("{amount}", String.valueOf(finalItemAmount)));
+                    .replace("{earning}", formattedPricingValue).replace("{receipt}", "")
+                    .replace("{list}", String.join(", ", itemList)).replace("{amount}", String.valueOf(soldItemAmount)));
             itemsSoldComponent.addExtra(" ");
-
-            String receiptHoverMessage = (getMessage("receipt_title", null) + ChatColor.RESET + String.join("\n", receiptList) + ChatColor.RESET);
-
-            TextComponent receiptNameComponent = getTextComponentMessage("receipt_text", null);
-            BaseComponent[] hoverEventComponents = TextComponent.fromLegacyText(receiptHoverMessage);
-
-            HoverEvent hoverEvent = new HoverEvent(Action.SHOW_TEXT, hoverEventComponents);
-            receiptNameComponent.setHoverEvent(hoverEvent);
-
-            sendMessage(player, Arrays.asList(itemsSoldComponent, receiptNameComponent));
+            String hover = getMessage("receipt_title", null) + ChatColor.RESET + String.join("\n", receiptList) + ChatColor.RESET;
+            TextComponent receiptName = getTextComponentMessage("receipt_text", null);
+            receiptName.setHoverEvent(new HoverEvent(Action.SHOW_TEXT, TextComponent.fromLegacyText(hover)));
+            sendMessage(player, Arrays.asList(itemsSoldComponent, receiptName));
         } else {
-            StringBuilder finalFormattedPricing = formattedPricing;
-            sendMessage(player, "items_sold", message -> message.replace("{earning}",
-                            finalFormattedPricing)
-                    .replace("{receipt}", "")
-                    .replace("{list}", String.join(", ", itemList))
-                    .replace("{amount}", itemAmountFormatted));
+            sendMessage(player, "items_sold", message -> message.replace("{earning}", formattedPricingValue)
+                    .replace("{receipt}", "").replace("{list}", String.join(", ", itemList)).replace("{amount}", itemAmountFormatted));
         }
 
-        /* Subject to deprecation */
-        if (plugin.fileLogger != null) {
-            plugin.fileLogger.info(player.getName() + " (" + player.getUniqueId() + ") sold: {" + HexColorUtility.purgeAllColor(String.join(", ", receiptList)) + "}");
-        }
-
-        if (configuration.getBoolean("options.sell_titles", false)) {
-            sendSellTitles(player, formattedPricing, itemAmountFormatted);
-        }
-
-        if (configuration.getBoolean("options.action_bar_msgs", false) && minorVersion >= 9) {
+        if (plugin.fileLogger != null) plugin.fileLogger.info(player.getName() + " (" + player.getUniqueId()
+                + ") sold: {" + HexColorUtility.purgeAllColor(String.join(", ", receiptList)) + "}");
+        if (configuration.getBoolean("options.sell_titles", false)) sendSellTitles(player, formattedPricing, itemAmountFormatted);
+        if (configuration.getBoolean("options.action_bar_msgs", false) && minorVersion >= 9)
             sendActionBar(player, formattedPricing, itemAmountFormatted);
-        }
     }
-
+    private void safeWarn(String message, Throwable error) { try { plugin.getLogger().warning("SellGUI " + message + ": " + error.getMessage()); } catch (RuntimeException ignored) { } }
     private String getMessage(String path, @Nullable Function<String, String> replacer) {
         CommentedConfiguration configuration = this.plugin.getConfiguration();
         String message = configuration.getString("messages." + path, "");
@@ -670,3 +621,8 @@ public final class CommandSellGUI implements TabExecutor {
         player.spigot().sendMessage(ChatMessageType.ACTION_BAR, message);
     }
 }
+
+
+
+
+

@@ -21,7 +21,8 @@ repositories {
     mavenCentral()
 
     maven { url = 'https://repo.papermc.io/repository/maven-public/' }
-    maven { url = "https://repo.mattstudios.me/artifactory/public/" }
+    // Triumph GUI 3.1.13 is on Maven Central; the old MattStudios
+    // Artifactory host redirects to an unreachable parked domain.
     maven { url = 'https://oss.sonatype.org/content/repositories/snapshots/' }
     maven { url = 'https://repo.codemc.org/repository/maven-public/' }
     maven { url = 'https://jitpack.io/' }
@@ -47,6 +48,11 @@ dependencies {
     compileOnly 'fr.tylwen.satyria.dynashop:shopguiplus-dynashop:1.8.0-SNAPSHOT'
     implementation "dev.triumphteam:triumph-gui:3.1.13"
     implementation 'org.bstats:bstats-bukkit:3.1.0'
+    testImplementation "org.spigotmc:spigot-api:1.21.8-R0.1-SNAPSHOT"
+    testImplementation 'com.github.brcdev-minecraft:shopgui-api:3.2.0'
+    testImplementation 'org.junit.jupiter:junit-jupiter:5.13.4'
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+    testImplementation 'org.mockito:mockito-core:5.20.0'
     implementation "com.tcoded:FoliaLib:0.5.1"
 }
 
@@ -61,6 +67,10 @@ shadowJar {
 }
 
 tasks.build.dependsOn tasks.shadowJar
+
+test {
+    useJUnitPlatform()
+}
 
 publishing {
     publications {
@@ -83,3 +93,4 @@ publishing {
         }
     }
 }
+

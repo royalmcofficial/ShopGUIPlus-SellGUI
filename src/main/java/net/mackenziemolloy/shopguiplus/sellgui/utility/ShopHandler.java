@@ -52,7 +52,9 @@ public class ShopHandler {
             return bestOffer.getPricePerItem() * amount;
         }
 
-        return ShopGuiPlusApi.getItemStackPriceSell(player, material);
+        // No unvalidated API fallback: it may return a cached price for
+        // an entry deliberately disabled through ShopGUI+ (sellPrice: -1).
+        return 0.0;
     }
 
     /**
@@ -134,12 +136,24 @@ public class ShopHandler {
                         continue;
                     }
 
-                    Double pricePerItem = DynaShopHandler.getSellPricePerItem(player, shopItem, singleItem);
-                    if (pricePerItem == null) {
-                        pricePerItem = shopItem.getSellPriceForAmount(player, 1);
+                    // Require a player-independent base price before a player-specific
+                    // quote or dynamic price can authorize this listing.
+                    double baseSellPrice = shopItem.getSellPrice();
+                    if (!Double.isFinite(baseSellPrice) || baseSellPrice <= 0) {
+                        continue;
                     }
 
-                    if (pricePerItem <= 0) {
+                    double effectiveSellPrice = shopItem.getSellPriceForAmount(player, 1);
+                    if (!Double.isFinite(effectiveSellPrice) || effectiveSellPrice <= 0) {
+                        continue;
+                    }
+
+                    Double pricePerItem = DynaShopHandler.getSellPricePerItem(player, shopItem, singleItem);
+                    if (pricePerItem == null) {
+                        pricePerItem = effectiveSellPrice;
+                    }
+
+                    if (!Double.isFinite(pricePerItem) || pricePerItem <= 0) {
                         continue;
                     }
 
