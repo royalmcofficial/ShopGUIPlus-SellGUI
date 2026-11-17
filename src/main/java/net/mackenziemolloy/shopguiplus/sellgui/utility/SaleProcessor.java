@@ -33,41 +33,93 @@ public final class SaleProcessor {
     public static boolean isShulker(ItemStack item) { if(item==null)return false; String n=item.getType().name(); return n.equals("SHULKER_BOX")||n.endsWith("_SHULKER_BOX"); }
     public SaleResult process(ItemStack item) { SaleBatch b=new SaleBatch(); if(item!=null)b.addInput(item); processAll(b); return b.size()==0?new SaleResult(null,List.of()):b.getResult(0); }
     public void processAll(SaleBatch batch) {
-        if(batch==null||!batch.begin())return;
-        Map<EconomyType,List<Candidate>> groups=new EnumMap<>(EconomyType.class);
-        for(int i=0;i<batch.size();i++) {
-            ItemStack source=batch.getInput(i);
+        if (batch == null || !batch.begin()) return;
+        Map<EconomyType, List<Candidate>> groups = new EnumMap<>(EconomyType.class);
+        for (int sourceIndex = 0; sourceIndex < batch.size(); sourceIndex++) {
             try {
-                if(source==null||source.getType().isAir())continue;
-                if(isShulker(source)) planBox(i,source,groups); else {
-                    SellOffer o=resolve(source); if(o!=null){double total=o.getPricePerItem()*source.getAmount(); if(Double.isFinite(total)&&total>0)groups.computeIfAbsent(o.getEconomyType(),x->new ArrayList<>()).add(new Candidate(i,-1,source,o,total));}
+                ItemStack source = batch.getInput(sourceIndex);
+                if (source == null || source.getType().isAir()) continue;
+                if (isShulker(source)) {
+                    planBox(sourceIndex, source, groups);
+                } else {
+                    SellOffer offer = resolve(source);
+                    if (offer == null) continue;
+                    double price = offer.getPricePerItem() * source.getAmount();
+                    if (Double.isFinite(price) && price > 0) {
+                        groups.computeIfAbsent(offer.getEconomyType(), ignored -> new ArrayList<>())
+                                .add(new Candidate(sourceIndex, -1, source, offer, price));
+                    }
                 }
-            } catch(RuntimeException|LinkageError ex) { log("Unable to plan input",ex); }
-        }
-        for(Map.Entry<EconomyType,List<Candidate>> group:groups.entrySet()) {
-            EconomyType currency=group.getKey(); List<Candidate> candidates=group.getValue(); double total=0; for(Candidate c:candidates)total+=c.price;
-            if(!Double.isFinite(total)||total<=0)continue;
-            Map<Integer,SaleResult> prepared=new java.util.LinkedHashMap<>(); List<SaleLine> lines=new ArrayList<>(); double preparedTotal=0;
-            for(Candidate c:candidates) {
-                try {
-                    ItemStack current=batch.getResult(c.source).getReturnedItem();
-                    if(c.slot<0) { SaleLine line=new SaleLine(c.item,c.item.getAmount(),c.price,currency,c.offer); prepared.put(c.source,new SaleResult(null,List.of(line))); lines.add(line); preparedTotal+=c.price; continue; }
-                    if(current==null||!isShulker(current))continue;
-                    ItemMeta raw=current.getItemMeta(); if(!(raw instanceof BlockStateMeta meta)||!(meta.getBlockState() instanceof ShulkerBox state))continue;
-                    ItemStack staged=current.clone(); ItemMeta stagedRaw=staged.getItemMeta(); if(!(stagedRaw instanceof BlockStateMeta stagedMeta)||!(stagedMeta.getBlockState() instanceof ShulkerBox stagedBox))continue;
-                    for(Candidate same:candidates)if(same.source==c.source&&same.slot>=0)stagedBox.getInventory().setItem(same.slot,null);
-                    stagedMeta.setBlockState(stagedBox); if(!staged.setItemMeta(stagedMeta))continue;
-                    // Build all lines for this source once, before any payment.
-                    List<SaleLine> sourceLines=new ArrayList<>(); for(Candidate same:candidates)if(same.source==c.source&&same.slot>=0)sourceLines.add(new SaleLine(same.item,same.item.getAmount(),same.price,currency,same.offer));
-                    double sourceTotal=sourceLines.stream().mapToDouble(SaleLine::getTotalPrice).sum();
-                    prepared.put(c.source,new SaleResult(staged,sourceLines)); lines.addAll(sourceLines); preparedTotal+=sourceTotal;
-                } catch(RuntimeException|LinkageError ex) { log("Unable to stage source for currency",ex); }
+            } catch (RuntimeException | LinkageError failure) {
+                log("Unable to plan GUI source; preserving it", failure);
             }
-            if(prepared.isEmpty()||!Double.isFinite(preparedTotal)||preparedTotal<=0)continue;
-            boolean paid; try { paid=payment.pay(currency,preparedTotal); } catch(RuntimeException|LinkageError ex) { log("Payment outcome uncertain; no retry",ex); continue; }
-            if(!paid)continue;
-            prepared.forEach(batch::commit);
-            for(SaleLine line:lines)try{observer.accept(line);}catch(RuntimeException|LinkageError ex){log("Observer failed after payment",ex);}
+        }
+
+        for (Map.Entry<EconomyType, List<Candidate>> currencyGroup : groups.entrySet()) {
+            EconomyType currency = currencyGroup.getKey();
+            Map<Integer, List<Candidate>> bySource = new java.util.LinkedHashMap<>();
+            for (Candidate candidate : currencyGroup.getValue()) {
+                bySource.computeIfAbsent(candidate.source, ignored -> new ArrayList<>()).add(candidate);
+            }
+
+            Map<Integer, SaleResult> preparedResults = new java.util.LinkedHashMap<>();
+            List<SaleLine> observerLines = new ArrayList<>();
+            double preparedTotal = 0;
+            for (Map.Entry<Integer, List<Candidate>> sourceGroup : bySource.entrySet()) {
+                int sourceIndex = sourceGroup.getKey();
+                List<Candidate> sourceCandidates = sourceGroup.getValue();
+                try {
+                    ItemStack current = batch.getResult(sourceIndex).getReturnedItem();
+                    List<SaleLine> freshLines = new ArrayList<>();
+                    ItemStack replacement;
+                    Candidate first = sourceCandidates.get(0);
+                    if (first.slot < 0) {
+                        if (sourceCandidates.size() != 1) continue;
+                        freshLines.add(new SaleLine(first.item, first.item.getAmount(), first.price, currency, first.offer));
+                        replacement = null;
+                    } else {
+                        if (current == null || !isShulker(current)) continue;
+                        ItemStack staged = current.clone();
+                        ItemMeta raw = staged.getItemMeta();
+                        if (!(raw instanceof BlockStateMeta meta)) continue;
+                        if (!(meta.getBlockState() instanceof ShulkerBox state)) continue;
+                        for (Candidate candidate : sourceCandidates) {
+                            if (candidate.slot >= 0) state.getInventory().setItem(candidate.slot, null);
+                            freshLines.add(new SaleLine(candidate.item, candidate.item.getAmount(), candidate.price, currency, candidate.offer));
+                        }
+                        meta.setBlockState(state);
+                        if (!staged.setItemMeta(meta)) continue;
+                        replacement = staged;
+                    }
+                    double sourceTotal = 0;
+                    for (SaleLine line : freshLines) sourceTotal += line.getTotalPrice();
+                    if (freshLines.isEmpty() || !Double.isFinite(sourceTotal) || sourceTotal <= 0) continue;
+                    List<SaleLine> combinedLines = new ArrayList<>(batch.getResult(sourceIndex).getLines());
+                    combinedLines.addAll(freshLines);
+                    SaleResult prepared = new SaleResult(replacement, combinedLines);
+                    preparedResults.put(sourceIndex, prepared);
+                    preparedTotal += sourceTotal;
+                    observerLines.addAll(freshLines);
+                } catch (RuntimeException | LinkageError failure) {
+                    log("Unable to stage source for currency; preserving current state", failure);
+                }
+            }
+            if (preparedResults.isEmpty() || !Double.isFinite(preparedTotal) || preparedTotal <= 0) continue;
+            boolean paid;
+            try {
+                paid = payment.pay(currency, preparedTotal);
+            } catch (RuntimeException | LinkageError failure) {
+                log("Payment outcome uncertain; no retry", failure);
+                continue;
+            }
+            if (!paid) continue;
+            for (Map.Entry<Integer, SaleResult> prepared : preparedResults.entrySet()) {
+                batch.commit(prepared.getKey(), prepared.getValue());
+            }
+            for (SaleLine line : observerLines) {
+                try { observer.accept(line); }
+                catch (RuntimeException | LinkageError failure) { log("Observer failed after payment", failure); }
+            }
         }
     }
     private void planBox(int index,ItemStack source,Map<EconomyType,List<Candidate>> groups) {
@@ -84,3 +136,4 @@ public final class SaleProcessor {
     private static void log(String message,Throwable ex){SellGUI p=SellGUI.getInstance();if(p!=null)try{p.getLogger().warning("SellGUI "+message+": "+ex.getMessage());}catch(RuntimeException ignored){}}
     private record Candidate(int source,int slot,ItemStack item,SellOffer offer,double price){}
 }
+

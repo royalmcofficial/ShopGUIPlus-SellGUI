@@ -399,15 +399,21 @@ public final class CommandSellGUI implements TabExecutor {
         boolean excessItems = false;
         boolean itemsPlacedInGui = false;
         Inventory inventory = event.getInventory();
-
+        Location returnLocation = player.getLocation().add(0.0D, 0.5D, 0.0D);
+        World returnWorld = returnLocation.getWorld();
+        try {
         // Drain every input slot before any payment, preventing re-close from processing it twice.
         List<ItemStack> inputs = new ArrayList<>();
         for (int slot = 0; slot < inventory.getSize(); slot++) {
-            ItemStack item = inventory.getItem(slot);
-            if (item == null || ignoredSlotSet.contains(slot)) continue;
-            itemsPlacedInGui = true;
-            inventory.setItem(slot, null);
-            batch.addInput(item);
+            ItemStack drainingItem = null;
+            try {
+                ItemStack item = inventory.getItem(slot);
+                drainingItem = item;
+                if (item == null || ignoredSlotSet.contains(slot)) continue;
+                itemsPlacedInGui = true;
+                inventory.setItem(slot, null);
+                batch.addInput(item);
+            } catch (RuntimeException | LinkageError drainFailure) { if (drainingItem != null) failedReturnRecovery.add(drainingItem); safeWarn("Could not drain GUI slot " + slot + " for " + player.getName() + " (" + player.getUniqueId() + ")", drainFailure); }
         }
 
         SaleProcessor processor = new SaleProcessor(item -> {
@@ -422,14 +428,11 @@ public final class CommandSellGUI implements TabExecutor {
             if (provider == null || !Double.isFinite(amount) || amount <= 0) return false;
             try { provider.deposit(player, amount); return true; }
             catch (RuntimeException | LinkageError ex) {
-                plugin.getLogger().warning("SellGUI payment failed; contents are preserved without retry: " + ex.getMessage());
+                safeWarn("Payment outcome uncertain for " + player.getName() + " (" + player.getUniqueId() + "); no retry", ex);
                 return false;
             }
         }, line -> { });
 
-        Location returnLocation = player.getLocation().add(0.0D, 0.5D, 0.0D);
-        World returnWorld = returnLocation.getWorld();
-        try {
             processor.processAll(batch);
         } finally {
             for (int index = 0; index < batch.size(); index++) {
@@ -443,7 +446,7 @@ public final class CommandSellGUI implements TabExecutor {
                         excessItems = true;
                         List<ItemStack> overflowItems = new ArrayList<>(overflow.values());
                         try {
-                            if (returnWorld != null) scheduler.runAtLocation(returnLocation, task -> overflowItems.forEach(stack -> returnWorld.dropItemNaturally(returnLocation, stack)));
+                            if (returnWorld != null) scheduler.runAtLocation(returnLocation, task -> { for (ItemStack stack : overflowItems) { try { returnWorld.dropItemNaturally(returnLocation, stack); } catch (RuntimeException | LinkageError dropFailure) { failedReturnRecovery.add(stack); safeWarn("Could not drop overflow for " + player.getName() + " (" + player.getUniqueId() + "); inspect recovery snapshot", dropFailure); } } });
                             else failedReturnRecovery.addAll(overflowItems);
                         } catch (RuntimeException | LinkageError dropFailure) { failedReturnRecovery.addAll(overflowItems); safeWarn("Could not schedule overflow drop", dropFailure); }
                     }
@@ -618,6 +621,8 @@ public final class CommandSellGUI implements TabExecutor {
         player.spigot().sendMessage(ChatMessageType.ACTION_BAR, message);
     }
 }
+
+
 
 
 
