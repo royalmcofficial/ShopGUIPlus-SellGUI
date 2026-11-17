@@ -51,6 +51,7 @@ dependencies {
     testImplementation "org.spigotmc:spigot-api:1.21.8-R0.1-SNAPSHOT"
     testImplementation 'com.github.brcdev-minecraft:shopgui-api:3.2.0'
     testImplementation 'org.junit.jupiter:junit-jupiter:5.13.4'
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
     testImplementation 'org.mockito:mockito-core:5.20.0'
     implementation "com.tcoded:FoliaLib:0.5.1"
 }
